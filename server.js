@@ -3,6 +3,7 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 const dotenv = require("dotenv");
 const twilio = require("twilio");
+const { handleCustomerLogin } = require("./index"); // ✅ Make sure index.js exports this
 
 dotenv.config();
 
@@ -28,14 +29,10 @@ app.post("/send-otp", async (req, res) => {
       .services(serviceSid)
       .verifications.create({ to: phone, channel: "sms" });
 
-    res
-      .status(200)
-      .json({ success: true, message: "OTP sent", sid: verification.sid });
+    res.status(200).json({ success: true, message: "OTP sent" });
   } catch (err) {
-    console.error("Error sending OTP:", err);
-    res
-      .status(err.status || 500)
-      .json({ success: false, message: err.message || "Failed to send OTP" });
+    console.error("Error sending OTP:", err.message);
+    res.status(500).json({ success: false, message: "Failed to send OTP" });
   }
 });
 
@@ -49,15 +46,20 @@ app.post("/verify-otp", async (req, res) => {
       .verificationChecks.create({ to: phone, code });
 
     if (verificationCheck.status === "approved") {
-      res.status(200).json({ success: true, message: "OTP verified" });
+      // ✅ Call Shopify logic after OTP is verified
+      const result = await handleCustomerLogin(phone);
+
+      res.status(200).json({
+        success: true,
+        message: "OTP verified and customer handled",
+        customer: result,
+      });
     } else {
       res.status(400).json({ success: false, message: "Invalid OTP" });
     }
   } catch (err) {
-    console.error("Error verifying OTP:", err);
-    res
-      .status(err.status || 500)
-      .json({ success: false, message: err.message || "Failed to verify OTP" });
+    console.error("Error verifying OTP:", err.message);
+    res.status(500).json({ success: false, message: "Failed to verify OTP" });
   }
 });
 
