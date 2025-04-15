@@ -44,9 +44,23 @@ app.post("/verify-otp", async (req, res) => {
       .services(serviceSid)
       .verificationChecks.create({ to: phone, code });
 
-    if (verificationCheck.status === "approved") {
-      res.status(200).json({ success: true, message: "OTP verified" });
-    } else {
+   if (verificationCheck.status === "approved") {
+  // Call the Shopify customer create/login API
+  const axios = require("axios");
+
+  try {
+    const response = await axios.post("http://localhost:5001/verify-and-login", { phone });
+    return res.status(200).json({
+      success: true,
+      message: "OTP verified and customer login successful",
+      customer: response.data.customer,
+    });
+  } catch (err) {
+    console.error("❌ Error linking Shopify customer:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: "OTP verified but failed to login to Shopify" });
+  }
+}
+ else {
       res.status(400).json({ success: false, message: "Invalid OTP" });
     }
   } catch (err) {
