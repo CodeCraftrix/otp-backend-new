@@ -13,15 +13,12 @@ const PORT = process.env.PORT || 5001;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Verify OTP and create or find Shopify customer
 app.post("/verify-and-login", async (req, res) => {
   const { phone } = req.body;
 
   try {
-    const customerCheck = await axios.get(
-      `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${encodeURIComponent(
-        phone
-      )}`,
+    const customerSearch = await axios.get(
+      `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${encodeURIComponent(phone)}`,
       {
         headers: {
           "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_ACCESS_TOKEN,
@@ -30,17 +27,21 @@ app.post("/verify-and-login", async (req, res) => {
       }
     );
 
-    let customer = customerCheck.data.customers[0];
+    let customer = customerSearch.data.customers[0];
 
     if (!customer) {
+      const formattedPhone = phone.replace(/\D/g, '');
       const customerCreate = await axios.post(
         `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers.json`,
         {
           customer: {
+            first_name: "OTP",
+            last_name: "Login",
+            email: `${formattedPhone}@otp-login.com`,
             phone: phone,
-            email: `${phone.replace(/\D/g, "")}@otp-login.com`, // Fake email (required)
             verified_email: true,
-            tags: "OTP Login",
+            accepts_marketing: false,
+            tags: "OTP Login, Phone Login",
           },
         },
         {
@@ -60,7 +61,7 @@ app.post("/verify-and-login", async (req, res) => {
       message: "Customer verified and found/created",
     });
   } catch (err) {
-    console.error("Error creating/finding customer:", err.response?.data || err);
+    console.error("❌ Error creating/finding customer:", err.response?.data || err.message);
     res.status(500).json({
       success: false,
       message: "Failed to create/find customer",
