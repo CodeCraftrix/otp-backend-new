@@ -28,6 +28,7 @@ app.post("/send-otp", async (req, res) => {
       .verifications.create({ to: phone, channel: "sms" });
     res.status(200).send({ success: true });
   } catch (error) {
+    console.error("OTP send error:", error.message);
     res.status(400).send({ success: false, message: error.message });
   }
 });
@@ -37,6 +38,7 @@ app.post("/verify-otp", async (req, res) => {
   const { phone, code } = req.body;
 
   try {
+    // 🔎 Check OTP
     const verification_check = await client.verify.v2
       .services(verifySid)
       .verificationChecks.create({ to: phone, code });
@@ -45,7 +47,7 @@ app.post("/verify-otp", async (req, res) => {
       return res.send({ success: false, message: "Invalid OTP" });
     }
 
-    // Now check or create Shopify customer
+    // 🔍 Search Shopify customer by phone
     const searchRes = await axios.get(
       `https://${SHOPIFY_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${phone}`,
       {
@@ -64,6 +66,7 @@ app.post("/verify-otp", async (req, res) => {
       });
     }
 
+    // 🆕 Create customer if not found
     const fakeEmail = `${phone.replace(/[^\d]/g, "")}@otplogin.fake`;
     const createRes = await axios.post(
       `https://${SHOPIFY_DOMAIN}/admin/api/2023-10/customers.json`,
@@ -89,13 +92,14 @@ app.post("/verify-otp", async (req, res) => {
       message: "New customer created and logged in.",
     });
   } catch (error) {
-    console.error(
-      "Shopify login error:",
-      error.response?.data || error.message
-    );
+    const shopifyError =
+      error.response?.data || error.message || "Unknown error";
+    console.error("🔴 Shopify login error:", shopifyError);
+
     res.status(500).send({
       success: false,
       message: "Server error during login",
+      error: shopifyError, // helpful for frontend/dev logs
     });
   }
 });
