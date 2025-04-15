@@ -1,57 +1,104 @@
-const axios = require("axios");
+const express = require("express");
+const bodyParser = require("body-parser");
+const cors = require("cors");
 const dotenv = require("dotenv");
+const axios = require("axios");
+const twilio = require("twilio");
+
 dotenv.config();
+const app = express();
+const PORT = process.env.PORT || 5000;
 
-// Load your Shopify credentials from .env
-const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10`;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
 
-// Main function used by server.js
-async function handleCustomerLogin(phone) {
+// Twilio Setup
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+
+// Shopify Setup
+const shopifyStore = process.env.SHOPIFY_STORE_DOMAIN;
+const shopifyAccessToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+
+// --- SEND OTP ---
+app.post("/send-otp", async (req, res) => {
+  const { phone } = req.body;
+
   try {
-    // 🔍 Step 1: Search for existing customer by phone
-    const searchUrl = `${SHOPIFY_ADMIN_API_URL}/customers/search.json?query=phone:${encodeURIComponent(
-      phone
-    )}`;
-    const searchResponse = await axios.get(searchUrl, {
-      headers: {
-        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-        "Content-Type": "application/json",
-      },
-    });
+    const verification = await twilioClient.verify.v2
+      .services(serviceSid)
+      .verifications.create({ to: phone, channel: "sms" });
 
-    const customers = searchResponse.data.customers;
-
-    if (customers.length > 0) {
-      console.log("✅ Customer found:", customers[0].id);
-      return customers[0]; // return existing customer
-    }
-
-    // 🆕 Step 2: Create customer if not found
-    const createResponse = await axios.post(
-      `${SHOPIFY_ADMIN_API_URL}/customers.json`,
-      {
-        customer: {
-          phone: phone,
-          tags: "OTP Login", // Optional: add a tag to identify
-          verified_email: true,
-          accepts_marketing: false,
-        },
-      },
-      {
-        headers: {
-          "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    console.log("✅ Customer created:", createResponse.data.customer.id);
-    return createResponse.data.customer;
-  } catch (error) {
-    console.error("❌ Error in handleCustomerLogin:", error.message);
-    throw error;
+    res.status(200).json({ success: true, message: "OTP sent", sid: verification.sid });
+  } catch (err) {
+    console.error("❌ OTP SEND ERROR:", err);
+    res.status(500).json({ success: false, message: "Failed to send OTP" });
   }
-}
+});
 
-module.exports = { handleCustomerLogin };
+// --- VERIFY OTP AND CREATE/LOGIN CUSTOMER ---
+app.post("/verify-otp", async (req, res) => {
+  const { phone, code } = req.body;
+
+  try {
+    const verification = await twilioClient.verify.v2
+      .services(serviceSid)
+      .verificationChecks.create({ to: phone, code });
+
+    if (verification.status === "approved") {
+      // Check if customer already exists
+      const customerSearchRes = await axios.get(
+        `https://${shopifyStore}/admin/api/2023-10/customers/search.json?query=phone:${encodeURIComponent(phone)}`,
+        {
+          headers: {
+            "X-Shopify-Access-Token": shopifyAccessToken,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      let customer = customerSearchRes.data.customers[0];
+
+      // If customer does not exist, create it
+      if (!customer) {
+        const newCustomer = await axios.post(
+          `https://${shopifyStore}/admin/api/2023-10/customers.json`,
+          {
+            customer: {
+              phone: phone,
+              verified_email: true,
+              accepts_marketing: false,
+            },
+          },
+          {
+            headers: {
+              "X-Shopify-Access-Token": shopifyAccessToken,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        customer = newCustomer.data.customer;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "OTP verified, customer created/logged in",
+        customer,
+      });
+    } else {
+      res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+  } catch (err) {
+    console.error("❌ OTP VERIFY ERROR:", err.message);
+    res.status(500).json({ success: false, message: "Failed to verify OTP" });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ OTP Auth Backend running at http://localhost:${PORT}`);
+});
