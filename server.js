@@ -44,6 +44,9 @@ app.post("/send-otp", async (req, res) => {
 });
 
 // ✅ Route to verify OTP
+const axios = require("axios");
+
+// Verify OTP route
 app.post("/verify-otp", async (req, res) => {
   const { phone, code } = req.body;
   const formattedPhone = formatIndianPhone(phone);
@@ -53,17 +56,48 @@ app.post("/verify-otp", async (req, res) => {
   }
 
   try {
+    // Step 1: Verify OTP
     const verification = await client.verify
       .services(process.env.TWILIO_VERIFY_SERVICE_SID)
       .verificationChecks.create({ to: formattedPhone, code });
 
-    if (verification.status === "approved") {
-      res.status(200).send({ success: true, message: "OTP verified" });
-    } else {
-      res.status(400).send({ success: false, message: "Invalid OTP" });
+    if (verification.status !== "approved") {
+      return res.status(400).send({ success: false, message: "Invalid OTP" });
     }
+
+    // Step 2: Check if customer already exists
+    const searchUrl = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${formattedPhone}`;
+    const headers = {
+      "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_ACCESS_TOKEN,
+      "Content-Type": "application/json",
+    };
+
+    const searchResponse = await axios.get(searchUrl, { headers });
+
+    let customer = searchResponse.data.customers[0];
+
+    // Step 3: If customer doesn't exist, create one
+    if (!customer) {
+      const createUrl = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers.json`;
+      const createData = {
+        customer: {
+          phone: formattedPhone,
+          tags: "OTP Login",
+        },
+      };
+
+      const createResponse = await axios.post(createUrl, createData, { headers });
+      customer = createResponse.data.customer;
+    }
+
+    // ✅ Customer exists or is now created – success
+    res.status(200).send({
+      success: true,
+      message: "OTP verified and customer stored",
+      customer,
+    });
   } catch (err) {
-    console.error("Error verifying OTP:", err.message);
+    console.error("Error in OTP verification or Shopify customer handling:", err.message);
     res.status(500).send({ success: false, message: err.message });
   }
 });
