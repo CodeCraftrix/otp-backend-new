@@ -43,7 +43,8 @@ app.post("/send-otp", async (req, res) => {
   }
 });
 
-// ✅ Route to verify OTP
+const fetch = require("node-fetch"); // 🧠 Required to make API calls to Shopify Admin
+
 app.post("/verify-otp", async (req, res) => {
   const { phone, code } = req.body;
   const formattedPhone = formatIndianPhone(phone);
@@ -53,20 +54,65 @@ app.post("/verify-otp", async (req, res) => {
   }
 
   try {
+    // 🔐 Verify OTP via Twilio
     const verification = await client.verify
       .services(process.env.TWILIO_VERIFY_SERVICE_SID)
       .verificationChecks.create({ to: formattedPhone, code });
 
-    if (verification.status === "approved") {
-      res.status(200).send({ success: true, message: "OTP verified" });
-    } else {
-      res.status(400).send({ success: false, message: "Invalid OTP" });
+    if (verification.status !== "approved") {
+      return res.status(400).send({ success: false, message: "Invalid OTP" });
     }
+
+    // ✅ OTP is verified — now search or create Shopify customer
+    const shop = process.env.SHOPIFY_STORE_DOMAIN;
+    const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+    const headers = {
+      "X-Shopify-Access-Token": token,
+      "Content-Type": "application/json"
+    };
+
+    // 🕵️ Search customer by phone
+    const searchRes = await fetch(`https://${shop}/admin/api/2023-10/customers/search.json?query=phone:${formattedPhone}`, {
+      method: "GET",
+      headers
+    });
+    const searchData = await searchRes.json();
+    let customer = searchData.customers[0];
+
+    if (!customer) {
+      // 🆕 Create new customer + send activation email
+      const fakeEmail = `${formattedPhone.replace('+91', '')}@yourdomain.com`;
+
+      const createRes = await fetch(`https://${shop}/admin/api/2023-10/customers.json`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          customer: {
+            phone: formattedPhone,
+            email: fakeEmail,
+            tags: "otp-login",
+            send_email_invite: true // 🎉 triggers activation link email
+          }
+        })
+      });
+
+      const createData = await createRes.json();
+      customer = createData.customer;
+    }
+
+    // 🎯 Send response with redirect to Shopify login
+    res.status(200).send({
+      success: true,
+      message: "OTP verified. Activation email sent if new customer.",
+      redirect: "/account/login"
+    });
+
   } catch (err) {
-    console.error("Error verifying OTP:", err.message);
-    res.status(500).send({ success: false, message: err.message });
+    console.error("OTP verification or Shopify error:", err.message);
+    res.status(500).send({ success: false, message: "OTP or customer handling failed." });
   }
 });
+
 
 // ✅ Start server
 const PORT = process.env.PORT || 5000;
