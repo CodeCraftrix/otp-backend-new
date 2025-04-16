@@ -57,5 +57,54 @@ app.post("/verify-user", async (req, res) => {
     res.status(500).send({ success: false, message: err.message });
   }
 });
+app.post("/get-customer-details", async (req, res) => {
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res
+      .status(400)
+      .send({ success: false, message: "Phone number is required" });
+  }
+
+  try {
+    const search = await axios.get(
+      `https://${shop}/admin/api/2023-10/customers/search.json?query=phone:+91${phone}`,
+      {
+        headers: {
+          "X-Shopify-Access-Token": token,
+        },
+      }
+    );
+
+    const customer = search.data.customers[0];
+
+    if (!customer) {
+      return res
+        .status(404)
+        .send({ success: false, message: "Customer not found" });
+    }
+
+    const customerData = {
+      id: customer.id,
+      first_name: customer.first_name || "",
+      email: customer.email || "",
+      phone: customer.phone || "",
+      address: customer.default_address || {
+        address1: "Not set",
+        city: "",
+        province: "",
+        zip: "",
+        country: "",
+      },
+    };
+
+    res.send({ success: true, customer: customerData });
+  } catch (err) {
+    console.error("Error fetching customer details:", err.message);
+    res
+      .status(500)
+      .send({ success: false, message: "Error fetching customer details" });
+  }
+});
 
 app.listen(5001, () => console.log("Customer creation running on port 5001"));
