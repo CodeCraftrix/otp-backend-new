@@ -2,34 +2,29 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const twilio = require("twilio");
 const cors = require("cors");
+const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 
-// Twilio Client setup
+// Twilio Client
 const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
 
-// ✅ Utility function to normalize phone numbers to E.164 format for India
-function formatIndianPhone(phone) {
-  if (!phone) return null;
-  phone = phone.toString().trim();
-  phone = phone.replace(/^(\+91|0)/, ''); // remove +91 or 0 if present
-  return `+91${phone}`;
+// Format phone number to E.164 (+91XXXXXXXXXX)
+function formatPhone(phone) {
+  const cleaned = phone.replace(/\D/g, ""); // remove all non-digit characters
+  return cleaned.startsWith("91") ? `+${cleaned}` : `+91${cleaned}`;
 }
 
-// ✅ Route to send OTP
+// Send OTP
 app.post("/send-otp", async (req, res) => {
   const { phone } = req.body;
-  const formattedPhone = formatIndianPhone(phone);
-
-  if (!formattedPhone) {
-    return res.status(400).send({ success: false, message: "Invalid phone number" });
-  }
+  const formattedPhone = formatPhone(phone);
 
   try {
     await client.verify
@@ -38,22 +33,15 @@ app.post("/send-otp", async (req, res) => {
 
     res.status(200).send({ success: true, message: "OTP sent" });
   } catch (err) {
-    console.error("Error sending OTP:", err.message);
+    console.error("❌ Error sending OTP:", err.message);
     res.status(500).send({ success: false, message: err.message });
   }
 });
 
-// ✅ Route to verify OTP
-const axios = require("axios");
-
-// Verify OTP route
+// Verify OTP + Create/Find Shopify Customer
 app.post("/verify-otp", async (req, res) => {
   const { phone, code } = req.body;
-  const formattedPhone = formatIndianPhone(phone);
-
-  if (!formattedPhone || !code) {
-    return res.status(400).send({ success: false, message: "Phone or OTP missing" });
-  }
+  const formattedPhone = formatPhone(phone);
 
   try {
     // Step 1: Verify OTP
@@ -65,43 +53,47 @@ app.post("/verify-otp", async (req, res) => {
       return res.status(400).send({ success: false, message: "Invalid OTP" });
     }
 
-    // Step 2: Check if customer already exists
-    const searchUrl = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${formattedPhone}`;
+    // Step 2: Search for customer in Shopify
     const headers = {
       "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_ACCESS_TOKEN,
       "Content-Type": "application/json",
     };
 
+    const searchUrl = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${formattedPhone}`;
     const searchResponse = await axios.get(searchUrl, { headers });
 
     let customer = searchResponse.data.customers[0];
 
-    // Step 3: If customer doesn't exist, create one
     if (!customer) {
+      // Step 3: Create new customer
       const createUrl = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers.json`;
-      const createData = {
+
+      const newCustomer = {
         customer: {
           phone: formattedPhone,
           tags: "OTP Login",
+          accepts_marketing: false,
         },
       };
 
-      const createResponse = await axios.post(createUrl, createData, { headers });
+      const createResponse = await axios.post(createUrl, newCustomer, {
+        headers,
+      });
+
       customer = createResponse.data.customer;
+      console.log("✅ Created new customer:", customer.id);
+    } else {
+      console.log("✅ Found existing customer:", customer.id);
     }
 
-    // ✅ Customer exists or is now created – success
-    res.status(200).send({
-      success: true,
-      message: "OTP verified and customer stored",
-      customer,
-    });
+    // Step 4: Success response
+    res.status(200).send({ success: true, customer });
+
   } catch (err) {
-    console.error("Error in OTP verification or Shopify customer handling:", err.message);
+    console.error("❌ OTP verify or Shopify error:", err.message);
     res.status(500).send({ success: false, message: err.message });
   }
 });
 
-// ✅ Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`OTP service running on port ${PORT}`));
+// Start server
+app.listen(5000, () => console.log("🚀 OTP service running on port 5000"));
