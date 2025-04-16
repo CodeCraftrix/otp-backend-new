@@ -1,68 +1,45 @@
 const express = require("express");
-const cors = require("cors");
 const bodyParser = require("body-parser");
-const dotenv = require("dotenv");
 const twilio = require("twilio");
-const { handleCustomerLogin } = require("./index"); // ✅ Make sure index.js exports this
-
-dotenv.config();
+const cors = require("cors");
+require("dotenv").config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+app.use(bodyParser.json());
+app.use(cors());
 
-// Twilio setup
-const twilioClient = twilio(
+const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
-const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
 
-app.use(cors());
-app.use(bodyParser.json());
-
-// Send OTP
 app.post("/send-otp", async (req, res) => {
   const { phone } = req.body;
-
   try {
-    const verification = await twilioClient.verify.v2
-      .services(serviceSid)
-      .verifications.create({ to: phone, channel: "sms" });
-
-    res.status(200).json({ success: true, message: "OTP sent" });
+    await client.verify
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verifications.create({ to: `+91${phone}`, channel: "sms" });
+    res.status(200).send({ success: true, message: "OTP sent" });
   } catch (err) {
-    console.error("Error sending OTP:", err.message);
-    res.status(500).json({ success: false, message: "Failed to send OTP" });
+    res.status(500).send({ success: false, message: err.message });
   }
 });
 
-// Verify OTP
 app.post("/verify-otp", async (req, res) => {
   const { phone, code } = req.body;
-
   try {
-    const verificationCheck = await twilioClient.verify.v2
-      .services(serviceSid)
-      .verificationChecks.create({ to: phone, code });
+    const verification = await client.verify
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verificationChecks.create({ to: `+91${phone}`, code });
 
-    if (verificationCheck.status === "approved") {
-      // ✅ Call Shopify logic after OTP is verified
-      const result = await handleCustomerLogin(phone);
-
-      res.status(200).json({
-        success: true,
-        message: "OTP verified and customer handled",
-        customer: result,
-      });
+    if (verification.status === "approved") {
+      res.status(200).send({ success: true });
     } else {
-      res.status(400).json({ success: false, message: "Invalid OTP" });
+      res.status(400).send({ success: false, message: "Invalid OTP" });
     }
   } catch (err) {
-    console.error("Error verifying OTP:", err.message);
-    res.status(500).json({ success: false, message: "Failed to verify OTP" });
+    res.status(500).send({ success: false, message: err.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
-});
+app.listen(5000, () => console.log("OTP service running on port 5000"));
