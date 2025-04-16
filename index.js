@@ -1,65 +1,61 @@
+const express = require("express");
 const axios = require("axios");
-const dotenv = require("dotenv");
-dotenv.config();
+const bodyParser = require("body-parser");
+const cors = require("cors");
+require("dotenv").config();
 
-// Load your Shopify credentials from .env
-<<<<<<< HEAD
-const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10`;
-=======
-const SHOPIFY_ADMIN_API_URL = https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10;
->>>>>>> 4de8fa1841b0f69e02ab3db66f23b2a624484103
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 
-// Main function used by server.js
-async function handleCustomerLogin(phone) {
+const shop = process.env.SHOPIFY_STORE_DOMAIN;
+const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+
+app.post("/verify-user", async (req, res) => {
+  const { phone } = req.body;
+
   try {
-    // 🔍 Step 1: Search for existing customer by phone
-    const searchUrl = `${SHOPIFY_ADMIN_API_URL}/customers/search.json?query=phone:${encodeURIComponent(
-      phone
-    )}`;
-    const searchResponse = await axios.get(searchUrl, {
-      headers: {
-        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const customers = searchResponse.data.customers;
-
-    if (customers.length > 0) {
-      console.log("✅ Customer found:", customers[0].id);
-      return customers[0]; // return existing customer
-    }
-
-    // 🆕 Step 2: Create customer if not found
-    const createResponse = await axios.post(
-<<<<<<< HEAD
-      `${SHOPIFY_ADMIN_API_URL}/customers.json`,
-=======
-      ${SHOPIFY_ADMIN_API_URL}/customers.json,
->>>>>>> 4de8fa1841b0f69e02ab3db66f23b2a624484103
-      {
-        customer: {
-          phone: phone,
-          tags: "OTP Login", // Optional: add a tag to identify
-          verified_email: true,
-          accepts_marketing: false,
-        },
-      },
+    // Check if customer already exists
+    const existing = await axios.get(
+      `https://${shop}/admin/api/2023-10/customers/search.json?query=phone:+91${phone}`,
       {
         headers: {
-          "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": token,
         },
       }
     );
 
-    console.log("✅ Customer created:", createResponse.data.customer.id);
-    return createResponse.data.customer;
-  } catch (error) {
-    console.error("❌ Error in handleCustomerLogin:", error.message);
-    throw error;
-  }
-}
+    let customer;
 
-module.exports = { handleCustomerLogin };
+    if (existing.data.customers.length > 0) {
+      customer = existing.data.customers[0];
+    } else {
+      // Create new customer with phone
+      const created = await axios.post(
+        `https://${shop}/admin/api/2023-10/customers.json`,
+        {
+          customer: {
+            phone: `+91${phone}`,
+            tags: "Phone Login",
+            verified_email: true,
+            email: `${phone}@yourstore.com`, // dummy email to make Shopify happy
+          },
+        },
+        {
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      customer = created.data.customer;
+    }
+
+    // Store customer ID in frontend (via cookie/localStorage)
+    res.send({ success: true, customer });
+  } catch (err) {
+    res.status(500).send({ success: false, message: err.message });
+  }
+});
+
+app.listen(5001, () => console.log("Customer creation running on port 5001"));
