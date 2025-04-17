@@ -1,5 +1,4 @@
 const express = require("express");
-const axios = require("axios");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 require("dotenv").config();
@@ -8,103 +7,96 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const shop = process.env.SHOPIFY_STORE_DOMAIN;
-const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+const axios = require("axios");
 
-app.post("/verify-user", async (req, res) => {
-  const { phone } = req.body;
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_VERIFY_SERVICE_SID,
+  SHOPIFY_ADMIN_ACCESS_TOKEN,
+  SHOPIFY_STORE_DOMAIN,
+} = process.env;
+
+// ========== 1. VERIFY OTP + LOGIN ==========
+app.post("/verify-otp-and-login", async (req, res) => {
+  const { phone, code } = req.body;
 
   try {
-    // Check if customer already exists
-    const existing = await axios.get(
-      `https://${shop}/admin/api/2023-10/customers/search.json?query=phone:+91${phone}`,
+    // 1. Verify OTP via Twilio
+    const verifyUrl = `https://verify.twilio.com/v2/Services/${TWILIO_VERIFY_SERVICE_SID}/VerificationCheck`;
+    const verifyResponse = await axios.post(
+      verifyUrl,
+      new URLSearchParams({
+        To: phone,
+        Code: code,
+      }),
       {
-        headers: {
-          "X-Shopify-Access-Token": token,
+        auth: {
+          username: TWILIO_ACCOUNT_SID,
+          password: TWILIO_AUTH_TOKEN,
         },
       }
     );
 
-    let customer;
+    const verificationStatus = verifyResponse.data.status;
+    if (verificationStatus !== "approved") {
+      return res.status(401).json({ success: false, message: "Invalid OTP" });
+    }
 
-    if (existing.data.customers.length > 0) {
-      customer = existing.data.customers[0];
-    } else {
-      // Create new customer with phone
-      const created = await axios.post(
-        `https://${shop}/admin/api/2023-10/customers.json`,
+    // 2. Check if customer already exists in Shopify
+    const searchUrl = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers/search.json?query=phone:${encodeURIComponent(
+      phone
+    )}`;
+    const searchResponse = await axios.get(searchUrl, {
+      headers: {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_ACCESS_TOKEN,
+        "Content-Type": "application/json",
+      },
+    });
+
+    let customer = searchResponse.data.customers[0];
+
+    // 3. If not found, create the customer
+    if (!customer) {
+      const createResponse = await axios.post(
+        `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/customers.json`,
         {
           customer: {
-            phone: `+91${phone}`,
-            tags: "Phone Login",
+            phone: phone,
+            tags: "OTP_Login",
             verified_email: true,
-            email: `${phone}@yourstore.com`, // dummy email to make Shopify happy
+            accepts_marketing: false,
           },
         },
         {
           headers: {
-            "X-Shopify-Access-Token": token,
+            "X-Shopify-Access-Token": SHOPIFY_ADMIN_ACCESS_TOKEN,
             "Content-Type": "application/json",
           },
         }
       );
-      customer = created.data.customer;
+      customer = createResponse.data.customer;
     }
 
-    // Store customer ID in frontend (via cookie/localStorage)
-    res.send({ success: true, customer });
-  } catch (err) {
-    res.status(500).send({ success: false, message: err.message });
-  }
-});
-app.post("/get-customer-details", async (req, res) => {
-  const { phone } = req.body;
-
-  if (!phone) {
-    return res
-      .status(400)
-      .send({ success: false, message: "Phone number is required" });
-  }
-
-  try {
-    const search = await axios.get(
-      `https://${shop}/admin/api/2023-10/customers/search.json?query=phone:+91${phone}`,
-      {
-        headers: {
-          "X-Shopify-Access-Token": token,
-        },
-      }
-    );
-
-    const customer = search.data.customers[0];
-
-    if (!customer) {
-      return res
-        .status(404)
-        .send({ success: false, message: "Customer not found" });
-    }
-
-    const customerData = {
-      id: customer.id,
-      first_name: customer.first_name || "",
-      email: customer.email || "",
-      phone: customer.phone || "",
-      address: customer.default_address || {
-        address1: "Not set",
-        city: "",
-        province: "",
-        zip: "",
-        country: "",
+    // 4. Success – return data to frontend
+    res.json({
+      success: true,
+      customer: {
+        id: customer.id,
+        phone: customer.phone,
+        first_name: customer.first_name,
+        last_name: customer.last_name,
+        email: customer.email,
       },
-    };
-
-    res.send({ success: true, customer: customerData });
-  } catch (err) {
-    console.error("Error fetching customer details:", err.message);
-    res
-      .status(500)
-      .send({ success: false, message: "Error fetching customer details" });
+    });
+  } catch (error) {
+    console.error("OTP + Login Error:", error.response?.data || error.message);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-app.listen(5001, () => console.log("Customer creation running on port 5001"));
+// ========== 2. START SERVER ==========
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Backend listening on port ${PORT}`);
+});
